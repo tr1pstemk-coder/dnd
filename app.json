@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "PF2e Character Sheet",
+    "slug": "pf2e-character-sheet",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F172A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pf2e.charactersheet"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0F172A"
+      },
+      "package": "com.pf2e.charactersheet"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": []
+  }
+}
