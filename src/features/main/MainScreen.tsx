@@ -6,10 +6,12 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  Alert,
+  Modal,
+  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Character, AbilityScores, Proficiency } from '../../domain/types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Character, AbilityScores, Proficiency, Condition } from '../../domain/types';
 import {
   abilityMod, calcAC, calcFortitude, calcReflex, calcWill,
   calcPerception, calcClassDC, profBonus, rollD20,
@@ -35,8 +37,17 @@ const ABILITY_LABELS: [keyof AbilityScores, string][] = [
   ['cha', 'Харизма'],
 ];
 
+const PF2E_CONDITIONS = [
+  'Оглушён', 'Напуган', 'Истощён', 'Ошеломлён', 'Распластан', 'Невидимый',
+  'Схвачен', 'Обездвижен', 'Отравлен', 'Ослеплён', 'Оглохший', 'Контролируемый',
+  'Дружественный', 'Запуган', 'Скрытый', 'Неотслеживаемый', 'Замедлен', 'Торопливый',
+  'Без сознания', 'Умирающий', 'Раненый', 'Зачарован', 'Подавлен',
+];
+
 export function MainScreen({ character: char, onCharChange }: Props) {
   const [diceResult, setDiceResult] = useState<DiceResult>(null);
+  const [conditionsModalOpen, setConditionsModalOpen] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const upd = useCallback((partial: Partial<Character>) => {
     onCharChange({ ...char, ...partial });
@@ -45,6 +56,16 @@ export function MainScreen({ character: char, onCharChange }: Props) {
   const rollSave = (label: string, bonus: number) => {
     const r = rollD20();
     setDiceResult({ label, roll: r, bonus, total: r + bonus });
+  };
+
+  const toggleCondition = (name: string) => {
+    const exists = char.conditions.find(c => c.name === name);
+    if (exists) {
+      upd({ conditions: char.conditions.filter(c => c.name !== name) });
+    } else {
+      const newId = String(Date.now());
+      upd({ conditions: [...char.conditions, { id: newId, name }] });
+    }
   };
 
   const ac = calcAC(char);
@@ -58,7 +79,11 @@ export function MainScreen({ character: char, onCharChange }: Props) {
 
   return (
     <>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
+        showsVerticalScrollIndicator={false}
+      >
 
         {/* ── Bio Card ─────────────────────────────────────────────────── */}
         <View style={styles.card}>
@@ -148,22 +173,23 @@ export function MainScreen({ character: char, onCharChange }: Props) {
             <View style={[styles.hpBar, { width: `${Math.max(0, Math.min(100, hpPct * 100))}%`, backgroundColor: hpColor }]} />
           </View>
 
+          {/* HP Row — каждый блок занимает 1/3 ширины */}
           <View style={styles.hpRow}>
             <View style={styles.hpBlock}>
               <Text style={styles.fieldLabel}>Текущие HP</Text>
               <NumberInput value={char.hp.current} onChange={v => upd({ hp: { ...char.hp, current: v } })} min={-999} max={char.hp.max} compact />
             </View>
             <View style={styles.hpBlock}>
-              <Text style={styles.fieldLabel}>Максимум HP</Text>
+              <Text style={styles.fieldLabel}>Макс HP</Text>
               <NumberInput value={char.hp.max} onChange={v => upd({ hp: { ...char.hp, max: v } })} min={1} compact />
             </View>
             <View style={styles.hpBlock}>
-              <Text style={styles.fieldLabel}>Временные HP</Text>
-              <NumberInput value={char.hp.temp} onChange={v => upd({ hp: { ...char.hp, temp: v } })} min={0} compact />
+              <Text style={styles.fieldLabel}>Врем HP</Text>
+              <NumberInput value={char.hp.temp ?? 0} onChange={v => upd({ hp: { ...char.hp, temp: v } })} min={0} compact />
             </View>
           </View>
 
-          <View style={styles.row}>
+          <View style={styles.gridTwo}>
             <View style={styles.flex1}>
               <Text style={styles.fieldLabel}>При смерти (0–4)</Text>
               <NumberInput value={char.dying} onChange={dying => upd({ dying })} min={0} max={4} compact />
@@ -201,7 +227,7 @@ export function MainScreen({ character: char, onCharChange }: Props) {
           {/* AC */}
           <View style={styles.acRow}>
             <View style={styles.acBig}>
-              <Text style={styles.fieldLabel}>КБ (Класс Брони)</Text>
+              <Text style={styles.fieldLabel}>КБ</Text>
               <Text style={styles.acValue}>{ac}</Text>
             </View>
             <View style={styles.flex1}>
@@ -210,7 +236,7 @@ export function MainScreen({ character: char, onCharChange }: Props) {
                 value={char.armorClass.proficiency}
                 onChange={proficiency => upd({ armorClass: { ...char.armorClass, proficiency } })}
               />
-              <View style={styles.row}>
+              <View style={styles.gridTwo}>
                 <View style={styles.flex1}>
                   <Text style={styles.miniLabel}>Бонус предмета</Text>
                   <NumberInput value={char.armorClass.itemBonus} onChange={v => upd({ armorClass: { ...char.armorClass, itemBonus: v } })} compact />
@@ -223,15 +249,14 @@ export function MainScreen({ character: char, onCharChange }: Props) {
             </View>
           </View>
 
-          {/* Saves */}
-          <View style={styles.savesGrid}>
+          {/* Saves — вертикально, каждый спас-бросок отдельной строкой */}
+          <View style={styles.savesStack}>
             {[
               { label: 'Стойкость', value: fort, prof: char.saves.fortitude, key: 'fortitude' as const, bonus: char.saves.fortitudeBonus, bonusKey: 'fortitudeBonus' as const },
               { label: 'Реакция', value: refl, prof: char.saves.reflex, key: 'reflex' as const, bonus: char.saves.reflexBonus, bonusKey: 'reflexBonus' as const },
               { label: 'Воля', value: will, prof: char.saves.will, key: 'will' as const, bonus: char.saves.willBonus, bonusKey: 'willBonus' as const },
             ].map(s => (
-              <View key={s.key} style={styles.saveCard}>
-                <Text style={styles.saveLabel}>{s.label}</Text>
+              <View key={s.key} style={styles.saveRow}>
                 <TouchableOpacity
                   style={styles.saveValueBtn}
                   onPress={() => rollSave(s.label, s.value)}
@@ -240,12 +265,17 @@ export function MainScreen({ character: char, onCharChange }: Props) {
                     {s.value >= 0 ? `+${s.value}` : `${s.value}`}
                   </Text>
                 </TouchableOpacity>
-                <ProficiencyPicker
-                  value={s.prof}
-                  onChange={p => upd({ saves: { ...char.saves, [s.key]: p } })}
-                />
-                <Text style={styles.miniLabel}>Прочее</Text>
-                <NumberInput value={s.bonus} onChange={v => upd({ saves: { ...char.saves, [s.bonusKey]: v } })} compact />
+                <View style={styles.flex1}>
+                  <Text style={styles.saveLabel}>{s.label}</Text>
+                  <ProficiencyPicker
+                    value={s.prof}
+                    onChange={p => upd({ saves: { ...char.saves, [s.key]: p } })}
+                  />
+                </View>
+                <View style={styles.saveBonus}>
+                  <Text style={styles.miniLabel}>Прочее</Text>
+                  <NumberInput value={s.bonus} onChange={v => upd({ saves: { ...char.saves, [s.bonusKey]: v } })} compact />
+                </View>
               </View>
             ))}
           </View>
@@ -294,20 +324,61 @@ export function MainScreen({ character: char, onCharChange }: Props) {
             placeholderTextColor={Colors.textMuted}
           />
 
-          <Text style={styles.fieldLabel}>Состояния (через запятую)</Text>
-          <TextInput
-            style={styles.fieldInput}
-            value={char.conditions.map(c => c.value != null ? `${c.name} ${c.value}` : c.name).join(', ')}
-            onChangeText={v => {
-              const conditions = v.split(',').map(s => s.trim()).filter(Boolean).map((s, i) => ({ id: String(i), name: s }));
-              upd({ conditions });
-            }}
-            placeholder="Оглушён 2, Напуган 1…"
-            placeholderTextColor={Colors.textMuted}
-          />
+          {/* Conditions picker */}
+          <Text style={styles.fieldLabel}>Состояния</Text>
+          <TouchableOpacity style={styles.condBtn} onPress={() => setConditionsModalOpen(true)}>
+            <Text style={styles.condBtnText}>
+              {char.conditions.length > 0
+                ? char.conditions.map(c => c.value != null ? `${c.name} ${c.value}` : c.name).join(', ')
+                : 'Нажмите для выбора состояний…'}
+            </Text>
+            <Ionicons name="chevron-down" size={16} color={Colors.textMuted} />
+          </TouchableOpacity>
+          {char.conditions.length > 0 && (
+            <View style={styles.condChips}>
+              {char.conditions.map(c => (
+                <TouchableOpacity
+                  key={c.id}
+                  style={styles.condChip}
+                  onPress={() => upd({ conditions: char.conditions.filter(x => x.id !== c.id) })}
+                >
+                  <Text style={styles.condChipText}>{c.name}</Text>
+                  <Text style={styles.condChipX}>×</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
 
       </ScrollView>
+
+      {/* ── Conditions Modal ─────────────────────────────────────────── */}
+      <Modal visible={conditionsModalOpen} transparent animationType="slide" onRequestClose={() => setConditionsModalOpen(false)}>
+        <View style={styles.condModalBackdrop}>
+          <View style={styles.condModal}>
+            <Text style={styles.condModalTitle}>Выберите состояния</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.condGrid}>
+                {PF2E_CONDITIONS.map(name => {
+                  const active = !!char.conditions.find(c => c.name === name);
+                  return (
+                    <TouchableOpacity
+                      key={name}
+                      style={[styles.condOption, active && styles.condOptionActive]}
+                      onPress={() => toggleCondition(name)}
+                    >
+                      <Text style={[styles.condOptionText, active && styles.condOptionTextActive]}>{name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+            <TouchableOpacity style={styles.condDoneBtn} onPress={() => setConditionsModalOpen(false)}>
+              <Text style={styles.condDoneText}>Готово</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <DiceRoller
         visible={diceResult !== null}
@@ -331,7 +402,6 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    ...Shadow.card,
   },
   sectionTitle: {
     color: Colors.accent,
@@ -396,32 +466,33 @@ const styles = StyleSheet.create({
   heroDotsRow: { flexDirection: 'row', gap: 8 },
   // Defense
   acRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
-  acBig: { alignItems: 'center', justifyContent: 'center', minWidth: 80 },
+  acBig: { alignItems: 'center', justifyContent: 'center', minWidth: 64 },
   acValue: {
     color: Colors.accent,
     fontSize: Fonts.xxxl,
     fontWeight: '900',
   },
-  savesGrid: { flexDirection: 'row', gap: 8 },
-  saveCard: {
-    flex: 1,
+  // Saves stack
+  savesStack: { gap: 10 },
+  saveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     backgroundColor: Colors.bg,
     borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
     padding: 8,
-    alignItems: 'center',
-    gap: 4,
   },
-  saveLabel: { color: Colors.textSecondary, fontSize: Fonts.xs, textAlign: 'center' },
   saveValueBtn: {
     backgroundColor: Colors.surfaceAlt,
     borderRadius: Radius.sm,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    marginVertical: 2,
+    width: 52,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   saveValue: { color: Colors.textPrimary, fontSize: Fonts.lg, fontWeight: '800' },
+  saveLabel: { color: Colors.textSecondary, fontSize: Fonts.xs, marginBottom: 4 },
+  saveBonus: { width: 80 },
   percRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   percValueBtn: {
     backgroundColor: Colors.surfaceAlt,
@@ -437,4 +508,65 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingVertical: 4,
   },
+  // Conditions
+  condBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.bg,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 10,
+    minHeight: 42,
+  },
+  condBtnText: { color: Colors.textMuted, fontSize: Fonts.sm, flex: 1 },
+  condChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  condChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.warning + '22',
+    borderRadius: Radius.full,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: Colors.warning + '55',
+  },
+  condChipText: { color: Colors.warning, fontSize: Fonts.xs, fontWeight: '600' },
+  condChipX: { color: Colors.warning, fontSize: Fonts.sm, fontWeight: '800' },
+  // Conditions modal
+  condModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
+  condModal: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: Radius.xl,
+    borderTopRightRadius: Radius.xl,
+    padding: 20,
+    paddingBottom: 40,
+    maxHeight: '80%',
+  },
+  condModalTitle: { color: Colors.textPrimary, fontSize: Fonts.lg, fontWeight: '700', marginBottom: 16 },
+  condGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  condOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: Radius.full,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  condOptionActive: {
+    backgroundColor: Colors.warning + '33',
+    borderColor: Colors.warning,
+  },
+  condOptionText: { color: Colors.textSecondary, fontSize: Fonts.sm, fontWeight: '600' },
+  condOptionTextActive: { color: Colors.warning, fontWeight: '700' },
+  condDoneBtn: {
+    marginTop: 16,
+    backgroundColor: Colors.accent,
+    borderRadius: Radius.md,
+    padding: 14,
+    alignItems: 'center',
+  },
+  condDoneText: { color: '#000', fontSize: Fonts.base, fontWeight: '700' },
 });

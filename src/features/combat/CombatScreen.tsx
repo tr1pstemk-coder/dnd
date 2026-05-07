@@ -24,12 +24,14 @@ interface Props {
   onCharChange: (ch: Character) => void;
 }
 
-type DiceResult = { label: string; roll: number; bonus: number; total: number } | null;
+type DiceResult = { label: string; roll: number; bonus: number; total: number; diceRolls?: number[] } | null;
 
 const ABILITY_OPTIONS: [keyof AbilityScores, string][] = [
   ['str', 'Сила'], ['dex', 'Ловкость'], ['con', 'Вынос.'],
   ['int', 'Инт.'], ['wis', 'Мдр.'], ['cha', 'Хар.'],
 ];
+
+const DICE_TYPES = ['d4', 'd6', 'd8', 'd10', 'd12', 'd20'];
 
 const emptyStrike = (): WeaponStrike => ({
   id: uuid(),
@@ -44,10 +46,23 @@ const emptyStrike = (): WeaponStrike => ({
   traits: '',
 });
 
+function rollDice(count: number, sides: number): number[] {
+  return Array.from({ length: count }, () => Math.floor(Math.random() * sides) + 1);
+}
+
+function parseDamageDice(dice: string): { count: number; sides: number } {
+  const m = dice.match(/(\d+)d(\d+)/i);
+  if (!m) return { count: 1, sides: 6 };
+  return { count: parseInt(m[1], 10), sides: parseInt(m[2], 10) };
+}
+
 export function CombatScreen({ character: char, onCharChange }: Props) {
   const [diceResult, setDiceResult] = useState<DiceResult>(null);
   const [editing, setEditing] = useState<WeaponStrike | null>(null);
   const [isNew, setIsNew] = useState(false);
+  // Для редактирования урона: кол-во кубиков и тип
+  const [diceCount, setDiceCount] = useState(1);
+  const [diceType, setDiceType] = useState('d6');
 
   const upd = useCallback((partial: Partial<Character>) => {
     onCharChange({ ...char, ...partial });
@@ -59,14 +74,34 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
     setDiceResult({ label: `${strike.name} — Атака`, roll: r, bonus, total: r + bonus });
   };
 
+  const rollDamage = (strike: WeaponStrike) => {
+    const { count, sides } = parseDamageDice(strike.damageDice);
+    const rolls = rollDice(count, sides);
+    const dmgBonus = abilityMod(char.abilities[strike.ability]) + strike.damageBonus;
+    const total = rolls.reduce((a, b) => a + b, 0) + dmgBonus;
+    setDiceResult({
+      label: `${strike.name} — Урон (${strike.damageDice}+${dmgBonus}) [${strike.damageType}]`,
+      roll: rolls[0],
+      bonus: dmgBonus,
+      total,
+      diceRolls: rolls,
+    });
+  };
+
   const openNew = () => {
-    setEditing(emptyStrike());
+    const s = emptyStrike();
+    setEditing(s);
     setIsNew(true);
+    setDiceCount(1);
+    setDiceType('d6');
   };
 
   const openEdit = (s: WeaponStrike) => {
+    const { count, sides } = parseDamageDice(s.damageDice);
     setEditing({ ...s });
     setIsNew(false);
+    setDiceCount(count);
+    setDiceType(`d${sides}`);
   };
 
   const saveStrike = () => {
@@ -75,11 +110,12 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
       Alert.alert('Ошибка', 'Введите название удара');
       return;
     }
+    const withDice = { ...editing, damageDice: `${diceCount}${diceType}` };
     let strikes: WeaponStrike[];
     if (isNew) {
-      strikes = [...char.strikes, editing];
+      strikes = [...char.strikes, withDice];
     } else {
-      strikes = char.strikes.map(s => s.id === editing.id ? editing : s);
+      strikes = char.strikes.map(s => s.id === withDice.id ? withDice : s);
     }
     upd({ strikes });
     setEditing(null);
@@ -116,7 +152,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
 
           return (
             <View key={strike.id} style={styles.strikeCard}>
-              <TouchableOpacity style={styles.strikeMain} onPress={() => rollAttack(strike)} activeOpacity={0.8}>
+              <View style={styles.strikeMain}>
                 <View style={[styles.typeIcon, { backgroundColor: strike.type === 'melee' ? Colors.danger + '22' : Colors.info + '22' }]}>
                   <Ionicons
                     name={strike.type === 'melee' ? 'shield-outline' : 'arrow-forward-outline'}
@@ -129,11 +165,17 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
                   <Text style={styles.strikeDmg}>{dmgStr}</Text>
                   {strike.traits ? <Text style={styles.strikeTraits}>{strike.traits}</Text> : null}
                 </View>
-                <View style={styles.strikeBonus}>
-                  <Text style={styles.strikeBonusText}>{bonusStr}</Text>
-                  <Text style={styles.strikeBonusSub}>атака</Text>
+                <View style={styles.strikeBtns}>
+                  <TouchableOpacity style={styles.strikeRollBtn} onPress={() => rollAttack(strike)}>
+                    <Text style={styles.strikeRollText}>{bonusStr}</Text>
+                    <Text style={styles.strikeRollSub}>атака</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.strikeRollBtn, styles.strikeDmgBtn]} onPress={() => rollDamage(strike)}>
+                    <Ionicons name="dice-outline" size={18} color={Colors.warning} />
+                    <Text style={styles.strikeDmgSub}>урон</Text>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+              </View>
 
               <View style={styles.strikeActions}>
                 <View style={[styles.profChip, { borderColor: PROF_COLOR[strike.proficiency] }]}>
@@ -161,10 +203,12 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
           ].map(({ label, key }) => (
             <View key={key} style={styles.profRow}>
               <Text style={styles.profRowLabel}>{label}</Text>
-              <ProficiencyPicker
-                value={char.weaponProficiencies[key]}
-                onChange={p => upd({ weaponProficiencies: { ...char.weaponProficiencies, [key]: p } })}
-              />
+              <View style={styles.profPickerWrap}>
+                <ProficiencyPicker
+                  value={char.weaponProficiencies[key]}
+                  onChange={p => upd({ weaponProficiencies: { ...char.weaponProficiencies, [key]: p } })}
+                />
+              </View>
             </View>
           ))}
         </View>
@@ -180,10 +224,12 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
           ].map(({ label, key }) => (
             <View key={key} style={styles.profRow}>
               <Text style={styles.profRowLabel}>{label}</Text>
-              <ProficiencyPicker
-                value={char.armorProficiencies[key]}
-                onChange={p => upd({ armorProficiencies: { ...char.armorProficiencies, [key]: p } })}
-              />
+              <View style={styles.profPickerWrap}>
+                <ProficiencyPicker
+                  value={char.armorProficiencies[key]}
+                  onChange={p => upd({ armorProficiencies: { ...char.armorProficiencies, [key]: p } })}
+                />
+              </View>
             </View>
           ))}
         </View>
@@ -241,6 +287,32 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
                 <Text style={styles.edLabel}>Умение в оружии</Text>
                 <ProficiencyPicker value={editing.proficiency} onChange={p => setEditing({ ...editing, proficiency: p })} />
 
+                {/* Dice Editor */}
+                <Text style={styles.edLabel}>Кубик урона</Text>
+                <View style={styles.diceEditor}>
+                  <View style={styles.diceCountWrap}>
+                    <Text style={styles.diceSubLabel}>Кол-во</Text>
+                    <NumberInput value={diceCount} onChange={setDiceCount} min={1} max={20} compact />
+                  </View>
+                  <View style={styles.diceTypesWrap}>
+                    <Text style={styles.diceSubLabel}>Вид кубика</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={styles.typeRow}>
+                        {DICE_TYPES.map(d => (
+                          <TouchableOpacity
+                            key={d}
+                            style={[styles.diceBtn, diceType === d && styles.diceBtnActive]}
+                            onPress={() => setDiceType(d)}
+                          >
+                            <Text style={[styles.diceBtnText, diceType === d && styles.diceBtnTextActive]}>{d}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+                </View>
+                <Text style={styles.dicePreview}>→ {diceCount}{diceType}</Text>
+
                 <View style={styles.edRow}>
                   <View style={styles.flex1}>
                     <Text style={styles.edLabel}>Бонус предмета</Text>
@@ -252,28 +324,14 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
                   </View>
                 </View>
 
-                <View style={styles.edRow}>
-                  <View style={styles.flex1}>
-                    <Text style={styles.edLabel}>Кубик урона</Text>
-                    <TextInput
-                      style={styles.edInput}
-                      value={editing.damageDice}
-                      onChangeText={damageDice => setEditing({ ...editing, damageDice })}
-                      placeholder="1d6"
-                      placeholderTextColor={Colors.textMuted}
-                    />
-                  </View>
-                  <View style={styles.flex1}>
-                    <Text style={styles.edLabel}>Тип урона</Text>
-                    <TextInput
-                      style={styles.edInput}
-                      value={editing.damageType}
-                      onChangeText={damageType => setEditing({ ...editing, damageType })}
-                      placeholder="S/P/B"
-                      placeholderTextColor={Colors.textMuted}
-                    />
-                  </View>
-                </View>
+                <Text style={styles.edLabel}>Тип урона (S/P/B/Fire…)</Text>
+                <TextInput
+                  style={styles.edInput}
+                  value={editing.damageType}
+                  onChangeText={damageType => setEditing({ ...editing, damageType })}
+                  placeholder="S/P/B"
+                  placeholderTextColor={Colors.textMuted}
+                />
 
                 <Text style={styles.edLabel}>Особенности</Text>
                 <TextInput
@@ -324,7 +382,6 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    ...Shadow.card,
   },
   strikeCard: {
     backgroundColor: Colors.surface,
@@ -332,7 +389,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: 'hidden',
-    ...Shadow.card,
   },
   strikeMain: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   typeIcon: { width: 40, height: 40, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
@@ -340,9 +396,19 @@ const styles = StyleSheet.create({
   strikeName: { color: Colors.textPrimary, fontSize: Fonts.base, fontWeight: '700' },
   strikeDmg: { color: Colors.warning, fontSize: Fonts.sm },
   strikeTraits: { color: Colors.textMuted, fontSize: Fonts.xs, marginTop: 2 },
-  strikeBonus: { alignItems: 'center' },
-  strikeBonusText: { color: Colors.accent, fontSize: Fonts.xl, fontWeight: '800' },
-  strikeBonusSub: { color: Colors.textMuted, fontSize: 10 },
+  strikeBtns: { flexDirection: 'row', gap: 6 },
+  strikeRollBtn: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: Radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    minWidth: 52,
+  },
+  strikeRollText: { color: Colors.accent, fontSize: Fonts.lg, fontWeight: '800' },
+  strikeRollSub: { color: Colors.textMuted, fontSize: 10 },
+  strikeDmgBtn: { backgroundColor: Colors.warning + '22' },
+  strikeDmgSub: { color: Colors.warning, fontSize: 10 },
   strikeActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -357,8 +423,26 @@ const styles = StyleSheet.create({
   profChip: { borderWidth: 1, borderRadius: Radius.sm, paddingHorizontal: 8, paddingVertical: 2 },
   profChipText: { fontSize: Fonts.xs, fontWeight: '700' },
   iconBtn: { padding: 6 },
-  profRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 },
-  profRowLabel: { color: Colors.textSecondary, fontSize: Fonts.sm },
+  profRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4, gap: 8 },
+  profRowLabel: { color: Colors.textSecondary, fontSize: Fonts.sm, minWidth: 90 },
+  profPickerWrap: { flex: 1 },
+  // Dice editor
+  diceEditor: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginTop: 4 },
+  diceCountWrap: { width: 120 },
+  diceTypesWrap: { flex: 1 },
+  diceSubLabel: { color: Colors.textMuted, fontSize: 10, marginBottom: 4 },
+  diceBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginRight: 6,
+  },
+  diceBtnActive: { backgroundColor: Colors.warning + '33', borderColor: Colors.warning },
+  diceBtnText: { color: Colors.textSecondary, fontSize: Fonts.sm, fontWeight: '600' },
+  diceBtnTextActive: { color: Colors.warning, fontWeight: '700' },
+  dicePreview: { color: Colors.warning, fontSize: Fonts.base, fontWeight: '700', marginTop: 4 },
   // Modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   modal: {
