@@ -24,7 +24,7 @@ interface Props {
   onCharChange: (ch: Character) => void;
 }
 
-type DiceResult = { label: string; roll: number; bonus: number; total: number; diceRolls?: number[] } | null;
+type DiceResult = { label: string; roll: number; bonus: number; total: number; diceLabel?: string; diceRolls?: number[] } | null;
 
 const ABILITY_OPTIONS: [keyof AbilityScores, string][] = [
   ['str', 'Сила'], ['dex', 'Ловкость'], ['con', 'Вынос.'],
@@ -32,6 +32,25 @@ const ABILITY_OPTIONS: [keyof AbilityScores, string][] = [
 ];
 
 const DICE_TYPES = ['d4', 'd6', 'd8', 'd10', 'd12', 'd20'];
+
+// Типы урона — код + русское название
+const DAMAGE_TYPE_OPTIONS: { code: string; label: string }[] = [
+  { code: 'S', label: 'Рубящий' },
+  { code: 'P', label: 'Пронзающий' },
+  { code: 'B', label: 'Дробящий' },
+  { code: 'Fire', label: 'Огонь' },
+  { code: 'Cold', label: 'Холод' },
+  { code: 'Acid', label: 'Кислота' },
+  { code: 'Electricity', label: 'Молния' },
+  { code: 'Sonic', label: 'Звук' },
+  { code: 'Poison', label: 'Яд' },
+  { code: 'Mental', label: 'Психический' },
+  { code: 'Spirit', label: 'Духовный' },
+  { code: 'Bleed', label: 'Кровотечение' },
+  { code: 'Precision', label: 'Точный' },
+  { code: 'Void', label: 'Пустота' },
+  { code: 'Vitality', label: 'Жизнь' },
+];
 
 const emptyStrike = (): WeaponStrike => ({
   id: uuid(),
@@ -56,13 +75,27 @@ function parseDamageDice(dice: string): { count: number; sides: number } {
   return { count: parseInt(m[1], 10), sides: parseInt(m[2], 10) };
 }
 
+// Парсим damageType (может быть несколько через '+')
+function parseDamageTypes(raw: string): string[] {
+  return raw.split('+').map(s => s.trim()).filter(Boolean);
+}
+
+function formatDamageTypes(codes: string[]): string {
+  return codes.join('+');
+}
+
+function damageTypeLabel(code: string): string {
+  return DAMAGE_TYPE_OPTIONS.find(d => d.code === code)?.label ?? code;
+}
+
 export function CombatScreen({ character: char, onCharChange }: Props) {
   const [diceResult, setDiceResult] = useState<DiceResult>(null);
   const [editing, setEditing] = useState<WeaponStrike | null>(null);
   const [isNew, setIsNew] = useState(false);
-  // Для редактирования урона: кол-во кубиков и тип
   const [diceCount, setDiceCount] = useState(1);
   const [diceType, setDiceType] = useState('d6');
+  // Выбранные типы урона (массив кодов)
+  const [selectedDmgTypes, setSelectedDmgTypes] = useState<string[]>(['S']);
 
   const upd = useCallback((partial: Partial<Character>) => {
     onCharChange({ ...char, ...partial });
@@ -71,7 +104,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
   const rollAttack = (strike: WeaponStrike) => {
     const bonus = calcAttackBonus(char, strike.ability, strike.proficiency, strike.itemBonus);
     const r = rollD20();
-    setDiceResult({ label: `${strike.name} — Атака`, roll: r, bonus, total: r + bonus });
+    setDiceResult({ label: `${strike.name} — Атака`, roll: r, bonus, total: r + bonus, diceLabel: 'd20' });
   };
 
   const rollDamage = (strike: WeaponStrike) => {
@@ -79,11 +112,13 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
     const rolls = rollDice(count, sides);
     const dmgBonus = abilityMod(char.abilities[strike.ability]) + strike.damageBonus;
     const total = rolls.reduce((a, b) => a + b, 0) + dmgBonus;
+    const typeLabels = parseDamageTypes(strike.damageType).map(damageTypeLabel).join('+');
     setDiceResult({
-      label: `${strike.name} — Урон (${strike.damageDice}+${dmgBonus}) [${strike.damageType}]`,
+      label: `${strike.name} — Урон (${strike.damageDice}) [${typeLabels}]`,
       roll: rolls[0],
       bonus: dmgBonus,
       total,
+      diceLabel: `d${sides}`,
       diceRolls: rolls,
     });
   };
@@ -94,6 +129,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
     setIsNew(true);
     setDiceCount(1);
     setDiceType('d6');
+    setSelectedDmgTypes(['S']);
   };
 
   const openEdit = (s: WeaponStrike) => {
@@ -102,6 +138,13 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
     setIsNew(false);
     setDiceCount(count);
     setDiceType(`d${sides}`);
+    setSelectedDmgTypes(parseDamageTypes(s.damageType));
+  };
+
+  const toggleDmgType = (code: string) => {
+    setSelectedDmgTypes(prev =>
+      prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
+    );
   };
 
   const saveStrike = () => {
@@ -110,7 +153,11 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
       Alert.alert('Ошибка', 'Введите название удара');
       return;
     }
-    const withDice = { ...editing, damageDice: `${diceCount}${diceType}` };
+    const withDice: WeaponStrike = {
+      ...editing,
+      damageDice: `${diceCount}${diceType}`,
+      damageType: formatDamageTypes(selectedDmgTypes),
+    };
     let strikes: WeaponStrike[];
     if (isNew) {
       strikes = [...char.strikes, withDice];
@@ -132,7 +179,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
     <>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        {/* ── Strikes ──────────────────────────────────────────────────── */}
+        {/* ── Strikes ────────────────────────────────────────────────── */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Удары</Text>
           <TouchableOpacity style={styles.addBtn} onPress={openNew}>
@@ -148,7 +195,8 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
           const bonus = calcAttackBonus(char, strike.ability, strike.proficiency, strike.itemBonus);
           const bonusStr = bonus >= 0 ? `+${bonus}` : `${bonus}`;
           const dmgBonus = abilityMod(char.abilities[strike.ability]) + strike.damageBonus;
-          const dmgStr = `${strike.damageDice}${dmgBonus >= 0 ? `+${dmgBonus}` : dmgBonus} ${strike.damageType}`;
+          const typeLabels = parseDamageTypes(strike.damageType).map(damageTypeLabel).join(' + ');
+          const dmgStr = `${strike.damageDice}${dmgBonus >= 0 ? `+${dmgBonus}` : dmgBonus} ${typeLabels}`;
 
           return (
             <View key={strike.id} style={styles.strikeCard}>
@@ -192,7 +240,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
           );
         })}
 
-        {/* ── Weapon Proficiencies ─────────────────────────────────────── */}
+        {/* ── Weapon Proficiencies ──────────────────────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Умения в оружии</Text>
           {[
@@ -213,7 +261,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
           ))}
         </View>
 
-        {/* ── Armor Proficiencies ──────────────────────────────────────── */}
+        {/* ── Armor Proficiencies ────────────────────────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Умения в броне</Text>
           {[
@@ -236,7 +284,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
 
       </ScrollView>
 
-      {/* ── Strike Editor Modal ──────────────────────────────────────── */}
+      {/* ── Strike Editor Modal ────────────────────────────────────────── */}
       <Modal visible={editing !== null} animationType="slide" transparent onRequestClose={() => setEditing(null)}>
         <View style={styles.modalBackdrop}>
           <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
@@ -324,14 +372,25 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
                   </View>
                 </View>
 
-                <Text style={styles.edLabel}>Тип урона (S/P/B/Fire…)</Text>
-                <TextInput
-                  style={styles.edInput}
-                  value={editing.damageType}
-                  onChangeText={damageType => setEditing({ ...editing, damageType })}
-                  placeholder="S/P/B"
-                  placeholderTextColor={Colors.textMuted}
-                />
+                {/* Тип урона — множественный выбор */}
+                <Text style={styles.edLabel}>Тип урона (можно выбрать несколько)</Text>
+                <View style={styles.dmgTypeGrid}>
+                  {DAMAGE_TYPE_OPTIONS.map(({ code, label }) => {
+                    const active = selectedDmgTypes.includes(code);
+                    return (
+                      <TouchableOpacity
+                        key={code}
+                        style={[styles.dmgTypeChip, active && styles.dmgTypeChipActive]}
+                        onPress={() => toggleDmgType(code)}
+                      >
+                        <Text style={[styles.dmgTypeText, active && styles.dmgTypeTextActive]}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {selectedDmgTypes.length > 0 && (
+                  <Text style={styles.dicePreview}>Выбрано: {selectedDmgTypes.map(damageTypeLabel).join(' + ')}</Text>
+                )}
 
                 <Text style={styles.edLabel}>Особенности</Text>
                 <TextInput
@@ -362,6 +421,7 @@ export function CombatScreen({ character: char, onCharChange }: Props) {
         roll={diceResult?.roll ?? 0}
         bonus={diceResult?.bonus ?? 0}
         total={diceResult?.total ?? 0}
+        diceLabel={diceResult?.diceLabel ?? 'd20'}
         onClose={() => setDiceResult(null)}
       />
     </>
@@ -443,6 +503,22 @@ const styles = StyleSheet.create({
   diceBtnText: { color: Colors.textSecondary, fontSize: Fonts.sm, fontWeight: '600' },
   diceBtnTextActive: { color: Colors.warning, fontWeight: '700' },
   dicePreview: { color: Colors.warning, fontSize: Fonts.base, fontWeight: '700', marginTop: 4 },
+  // Тип урона — сетка чипсов
+  dmgTypeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  dmgTypeChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.bg,
+  },
+  dmgTypeChipActive: {
+    backgroundColor: Colors.danger + '33',
+    borderColor: Colors.danger,
+  },
+  dmgTypeText: { color: Colors.textSecondary, fontSize: Fonts.xs, fontWeight: '600' },
+  dmgTypeTextActive: { color: Colors.danger, fontWeight: '700' },
   // Modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
   modal: {

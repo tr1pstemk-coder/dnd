@@ -59,6 +59,8 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
   const [editSpell, setEditSpell] = useState<SpellEntry | null>(null);
   const [isNewSpell, setIsNewSpell] = useState(false);
   const [expandedLevel, setExpandedLevel] = useState<number | null>(null);
+  // Фокусное заклинание в режиме редактирования
+  const [editFocusId, setEditFocusId] = useState<string | null>(null);
 
   const upd = useCallback((partial: Partial<Character>) => {
     onCharChange({ ...char, ...partial });
@@ -109,7 +111,7 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
     <>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        {/* ── Tradition & Type ─────────────────────────────────────────── */}
+        {/* ── Tradition & Type ───────────────────────────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Традиция</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -145,7 +147,7 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
           </View>
         </View>
 
-        {/* ── Spell Stats ──────────────────────────────────────────────── */}
+        {/* ── Spell Stats ─────────────────────────────────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Параметры заклинателя</Text>
           <View style={styles.spellStatsRow}>
@@ -178,28 +180,72 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
           </View>
         </View>
 
-        {/* ── Focus Points ─────────────────────────────────────────────── */}
+        {/* ── Focus Points ─────────────────────────────────────────────────── */}
         <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.sectionTitle}>Фокусные заклинания</Text>
-          </View>
+          <Text style={styles.sectionTitle}>Фокусные заклинания</Text>
+
+          {/* Очки фокуса */}
           <View style={styles.focusRow}>
-            <Text style={styles.edLabel}>Очки фокуса:</Text>
-            <NumberInput value={char.magic.focusPoints} onChange={v => updMagic({ focusPoints: v })} min={0} max={char.magic.focusMax} compact />
-            <Text style={styles.edLabel}> / </Text>
-            <NumberInput value={char.magic.focusMax} onChange={v => updMagic({ focusMax: v })} min={0} max={3} compact />
+            <Text style={styles.focusLabel}>Очки фокуса</Text>
+            <View style={styles.focusControls}>
+              <NumberInput
+                value={char.magic.focusPoints}
+                onChange={v => updMagic({ focusPoints: Math.min(v, char.magic.focusMax) })}
+                min={0}
+                max={char.magic.focusMax}
+                compact
+              />
+              <Text style={styles.focusSep}>из</Text>
+              <NumberInput
+                value={char.magic.focusMax}
+                onChange={v => updMagic({ focusMax: v, focusPoints: Math.min(char.magic.focusPoints, v) })}
+                min={0}
+                max={3}
+                compact
+              />
+            </View>
           </View>
 
           {char.magic.focusSpells.length === 0 && (
             <Text style={styles.empty}>Нет фокусных заклинаний</Text>
           )}
+
           {char.magic.focusSpells.map(s => (
-            <View key={s.id} style={styles.spellRow}>
-              <View style={styles.flex1}>
-                <Text style={styles.spellName}>{s.name}</Text>
-                <Text style={styles.spellSub}>{s.castTime}</Text>
-              </View>
-              <TouchableOpacity onPress={() => {
+            <View key={s.id} style={styles.focusSpellRow}>
+              {editFocusId === s.id ? (
+                // Режим редактирования
+                <View style={styles.flex1}>
+                  <TextInput
+                    style={styles.focusNameInput}
+                    value={s.name}
+                    onChangeText={name => updMagic({
+                      focusSpells: char.magic.focusSpells.map(x => x.id === s.id ? { ...x, name } : x)
+                    })}
+                    placeholder="Название заклинания"
+                    placeholderTextColor={Colors.textMuted}
+                    autoFocus
+                  />
+                  <TextInput
+                    style={styles.focusNameInput}
+                    value={s.castTime}
+                    onChangeText={castTime => updMagic({
+                      focusSpells: char.magic.focusSpells.map(x => x.id === s.id ? { ...x, castTime } : x)
+                    })}
+                    placeholder="Время (напр. 2 действия)"
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                  <TouchableOpacity style={styles.focusDoneBtn} onPress={() => setEditFocusId(null)}>
+                    <Text style={styles.focusDoneText}>Готово</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                // Режим просмотра
+                <TouchableOpacity style={styles.flex1} onPress={() => setEditFocusId(s.id)}>
+                  <Text style={styles.spellName}>{s.name}</Text>
+                  <Text style={styles.spellSub}>{s.castTime}</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity style={styles.iconBtn} onPress={() => {
                 Alert.alert('Удалить', `Удалить «${s.name}»?`, [
                   { text: 'Отмена', style: 'cancel' },
                   { text: 'Удалить', style: 'destructive', onPress: () => updMagic({ focusSpells: char.magic.focusSpells.filter(x => x.id !== s.id) }) },
@@ -216,6 +262,7 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
               const id = uuid();
               const focusSpell = { id, name: 'Новое фокусное', level: 1, castTime: '2 действия', description: '' };
               updMagic({ focusSpells: [...char.magic.focusSpells, focusSpell] });
+              setEditFocusId(id);
             }}
           >
             <Ionicons name="add" size={16} color={Colors.accent} />
@@ -223,7 +270,7 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
           </TouchableOpacity>
         </View>
 
-        {/* ── Spell Slots by Level ─────────────────────────────────────── */}
+        {/* ── Spell Slots by Level ───────────────────────────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Ячейки заклинаний</Text>
 
@@ -287,13 +334,29 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
                   </View>
                 </View>
 
+                {/* Ячейки: макс и остаток вертикально */}
                 {isExpanded && (
                   <View style={styles.slotEditor}>
                     <View style={styles.slotEditorRow}>
-                      <Text style={styles.edLabel}>Макс ячеек:</Text>
-                      <NumberInput value={slot.max} onChange={v => updMagic({ slots: { ...char.magic.slots, [lvl]: { ...slot, max: v } } })} min={0} compact />
-                      <Text style={styles.edLabel}>Осталось:</Text>
-                      <NumberInput value={slot.remaining} onChange={v => updMagic({ slots: { ...char.magic.slots, [lvl]: { ...slot, remaining: Math.min(v, slot.max) } } })} min={0} max={slot.max} compact />
+                      <View style={styles.slotEditorField}>
+                        <Text style={styles.slotEditorLabel}>Макс ячеек</Text>
+                        <NumberInput
+                          value={slot.max}
+                          onChange={v => updMagic({ slots: { ...char.magic.slots, [lvl]: { ...slot, max: v } } })}
+                          min={0}
+                          compact
+                        />
+                      </View>
+                      <View style={styles.slotEditorField}>
+                        <Text style={styles.slotEditorLabel}>Осталось</Text>
+                        <NumberInput
+                          value={slot.remaining}
+                          onChange={v => updMagic({ slots: { ...char.magic.slots, [lvl]: { ...slot, remaining: Math.min(v, slot.max) } } })}
+                          min={0}
+                          max={slot.max}
+                          compact
+                        />
+                      </View>
                     </View>
                   </View>
                 )}
@@ -308,7 +371,7 @@ export function MagicScreen({ character: char, onCharChange }: Props) {
 
       </ScrollView>
 
-      {/* ── Spell Editor ─────────────────────────────────────────────── */}
+      {/* ── Spell Editor ─────────────────────────────────────────────────── */}
       <Modal visible={editSpell !== null} animationType="slide" transparent onRequestClose={() => setEditSpell(null)}>
         <View style={styles.modalBackdrop}>
           <ScrollView contentContainerStyle={styles.modal} keyboardShouldPersistTaps="handled">
@@ -446,7 +509,42 @@ const styles = StyleSheet.create({
   },
   edRow: { flexDirection: 'row', gap: 10 },
   // Focus
-  focusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  focusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  focusLabel: { color: Colors.textSecondary, fontSize: Fonts.sm, fontWeight: '600' },
+  focusControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  focusSep: { color: Colors.textMuted, fontSize: Fonts.xs, fontWeight: '600' },
+  focusSpellRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: Colors.bg,
+    borderRadius: Radius.sm,
+    padding: 10,
+    marginBottom: 4,
+    gap: 8,
+  },
+  focusNameInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    color: Colors.textPrimary,
+    fontSize: Fonts.sm,
+    padding: 8,
+    marginBottom: 6,
+  },
+  focusDoneBtn: {
+    backgroundColor: Colors.accent,
+    borderRadius: Radius.sm,
+    padding: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  focusDoneText: { color: '#000', fontSize: Fonts.xs, fontWeight: '700' },
   // Spell levels
   levelHeader: {
     flexDirection: 'row',
@@ -467,8 +565,8 @@ const styles = StyleSheet.create({
   slotText: { color: Colors.accent, fontSize: Fonts.xs, fontWeight: '700' },
   slotControls: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   slotBtn: {
-    width: 28,
-    height: 28,
+    width: 26,
+    height: 26,
     borderRadius: Radius.sm,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -477,14 +575,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   slotBtnAccent: { backgroundColor: Colors.accent, borderColor: Colors.accent },
-  slotBtnText: { color: Colors.textPrimary, fontSize: Fonts.md, lineHeight: 20 },
+  slotBtnText: { color: Colors.textPrimary, fontSize: 14, lineHeight: 18 },
+  // Ячейки: вертикальный редактор
   slotEditor: {
     backgroundColor: Colors.bg,
     borderRadius: Radius.sm,
     padding: 10,
     marginBottom: 8,
   },
-  slotEditorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  slotEditorRow: { flexDirection: 'row', gap: 12 },
+  slotEditorField: { flex: 1 },
+  slotEditorLabel: { color: Colors.textSecondary, fontSize: Fonts.xs, marginBottom: 4 },
   levelAdd: { padding: 4 },
   addSpellBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
   addSpellText: { color: Colors.accent, fontSize: Fonts.sm },

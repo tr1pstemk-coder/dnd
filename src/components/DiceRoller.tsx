@@ -16,10 +16,11 @@ interface Props {
   roll: number;
   bonus: number;
   total: number;
+  diceLabel?: string; // e.g. 'd6', 'd10', 'd20'
   onClose: () => void;
 }
 
-export function DiceRoller({ visible, label, roll, bonus, total, onClose }: Props) {
+export function DiceRoller({ visible, label, roll, bonus, total, diceLabel = 'd20', onClose }: Props) {
   const spin = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.3)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -56,8 +57,8 @@ export function DiceRoller({ visible, label, roll, bonus, total, onClose }: Prop
     outputRange: ['0deg', '360deg'],
   });
 
-  const isCrit = roll === 20;
-  const isFumble = roll === 1;
+  const isCrit = roll === 20 && diceLabel === 'd20';
+  const isFumble = roll === 1 && diceLabel === 'd20';
   const resultColor = isCrit ? Colors.accent : isFumble ? Colors.danger : Colors.textPrimary;
   const bonusStr = bonus >= 0 ? `+${bonus}` : `${bonus}`;
 
@@ -74,7 +75,7 @@ export function DiceRoller({ visible, label, roll, bonus, total, onClose }: Prop
 
           <Animated.View style={[styles.diceContainer, { transform: [{ rotate: rotation }] }]}>
             <View style={[styles.dice, isCrit && styles.diceCrit, isFumble && styles.diceFumble]}>
-              <Text style={styles.diceLabel}>d20</Text>
+              <Text style={styles.diceLabel}>{diceLabel}</Text>
             </View>
           </Animated.View>
 
