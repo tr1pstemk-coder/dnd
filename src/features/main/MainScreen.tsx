@@ -7,10 +7,8 @@ import {
   TextInput,
   TouchableOpacity,
   Modal,
-  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Character, AbilityScores, Proficiency, Condition } from '../../domain/types';
 import {
   abilityMod, calcAC, calcFortitude, calcReflex, calcWill,
@@ -47,7 +45,6 @@ const PF2E_CONDITIONS = [
 export function MainScreen({ character: char, onCharChange }: Props) {
   const [diceResult, setDiceResult] = useState<DiceResult>(null);
   const [conditionsModalOpen, setConditionsModalOpen] = useState(false);
-  const insets = useSafeAreaInsets();
 
   const upd = useCallback((partial: Partial<Character>) => {
     onCharChange({ ...char, ...partial });
@@ -81,7 +78,7 @@ export function MainScreen({ character: char, onCharChange }: Props) {
     <>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 8 }]}
+        contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
 
@@ -173,49 +170,71 @@ export function MainScreen({ character: char, onCharChange }: Props) {
             <View style={[styles.hpBar, { width: `${Math.max(0, Math.min(100, hpPct * 100))}%`, backgroundColor: hpColor }]} />
           </View>
 
-          {/* HP Row — каждый блок занимает 1/3 ширины */}
-          <View style={styles.hpRow}>
-            <View style={styles.hpBlock}>
+          {/* Ряд 1: Текущие HP + Макс HP */}
+          <View style={styles.gridTwo}>
+            <View style={styles.flex1}>
               <Text style={styles.fieldLabel}>Текущие HP</Text>
-              <NumberInput value={char.hp.current} onChange={v => upd({ hp: { ...char.hp, current: v } })} min={-999} max={char.hp.max} compact />
+              <NumberInput
+                value={char.hp.current}
+                onChange={v => upd({ hp: { ...char.hp, current: v } })}
+                min={-999}
+                max={char.hp.max}
+                compact
+              />
             </View>
-            <View style={styles.hpBlock}>
+            <View style={styles.flex1}>
               <Text style={styles.fieldLabel}>Макс HP</Text>
-              <NumberInput value={char.hp.max} onChange={v => upd({ hp: { ...char.hp, max: v } })} min={1} compact />
-            </View>
-            <View style={styles.hpBlock}>
-              <Text style={styles.fieldLabel}>Врем HP</Text>
-              <NumberInput value={char.hp.temp ?? 0} onChange={v => upd({ hp: { ...char.hp, temp: v } })} min={0} compact />
+              <NumberInput
+                value={char.hp.max}
+                onChange={v => upd({ hp: { ...char.hp, max: v } })}
+                min={1}
+                compact
+              />
             </View>
           </View>
 
+          {/* Ряд 2: Временные HP + При смерти */}
           <View style={styles.gridTwo}>
+            <View style={styles.flex1}>
+              <Text style={styles.fieldLabel}>Временные HP</Text>
+              <NumberInput
+                value={char.hp.temp ?? 0}
+                onChange={v => {
+                  const newHp = { ...char.hp, temp: Math.max(0, v) };
+                  onCharChange({ ...char, hp: newHp });
+                }}
+                min={0}
+                compact
+              />
+            </View>
             <View style={styles.flex1}>
               <Text style={styles.fieldLabel}>При смерти (0–4)</Text>
               <NumberInput value={char.dying} onChange={dying => upd({ dying })} min={0} max={4} compact />
             </View>
+          </View>
+
+          {/* Ряд 3: Ранение + Очки героизма */}
+          <View style={styles.gridTwo}>
             <View style={styles.flex1}>
               <Text style={styles.fieldLabel}>Ранение (0–4)</Text>
               <NumberInput value={char.wounded} onChange={wounded => upd({ wounded })} min={0} max={4} compact />
             </View>
-          </View>
-
-          {/* Hero Points */}
-          <View style={styles.heroPointsRow}>
-            <Text style={styles.fieldLabel}>Очки героизма</Text>
-            <View style={styles.heroDotsRow}>
-              {[1, 2, 3].map(i => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => upd({ heroPoints: char.heroPoints === i ? i - 1 : i })}
-                >
-                  <Ionicons
-                    name={i <= char.heroPoints ? 'star' : 'star-outline'}
-                    size={28}
-                    color={i <= char.heroPoints ? Colors.gold : Colors.textMuted}
-                  />
-                </TouchableOpacity>
-              ))}
+            <View style={styles.flex1}>
+              <Text style={styles.fieldLabel}>Очки героизма</Text>
+              <View style={styles.heroDotsRow}>
+                {[1, 2, 3].map(i => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => upd({ heroPoints: char.heroPoints === i ? i - 1 : i })}
+                  >
+                    <Ionicons
+                      name={i <= char.heroPoints ? 'star' : 'star-outline'}
+                      size={26}
+                      color={i <= char.heroPoints ? Colors.gold : Colors.textMuted}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </View>
         </View>
@@ -249,32 +268,38 @@ export function MainScreen({ character: char, onCharChange }: Props) {
             </View>
           </View>
 
-          {/* Saves — вертикально, каждый спас-бросок отдельной строкой */}
+          {/* Saves — вертикально с фиксированным лейаутом */}
           <View style={styles.savesStack}>
             {[
               { label: 'Стойкость', value: fort, prof: char.saves.fortitude, key: 'fortitude' as const, bonus: char.saves.fortitudeBonus, bonusKey: 'fortitudeBonus' as const },
-              { label: 'Реакция', value: refl, prof: char.saves.reflex, key: 'reflex' as const, bonus: char.saves.reflexBonus, bonusKey: 'reflexBonus' as const },
-              { label: 'Воля', value: will, prof: char.saves.will, key: 'will' as const, bonus: char.saves.willBonus, bonusKey: 'willBonus' as const },
+              { label: 'Реакция',   value: refl, prof: char.saves.reflex,    key: 'reflex'    as const, bonus: char.saves.reflexBonus,    bonusKey: 'reflexBonus'    as const },
+              { label: 'Воля',      value: will, prof: char.saves.will,       key: 'will'      as const, bonus: char.saves.willBonus,      bonusKey: 'willBonus'      as const },
             ].map(s => (
-              <View key={s.key} style={styles.saveRow}>
-                <TouchableOpacity
-                  style={styles.saveValueBtn}
-                  onPress={() => rollSave(s.label, s.value)}
-                >
-                  <Text style={styles.saveValue}>
-                    {s.value >= 0 ? `+${s.value}` : `${s.value}`}
-                  </Text>
-                </TouchableOpacity>
-                <View style={styles.flex1}>
-                  <Text style={styles.saveLabel}>{s.label}</Text>
-                  <ProficiencyPicker
-                    value={s.prof}
-                    onChange={p => upd({ saves: { ...char.saves, [s.key]: p } })}
-                  />
+              <View key={s.key} style={styles.saveBlock}>
+                {/* Строка 1: значение + название + выбор умения */}
+                <View style={styles.saveTopRow}>
+                  <TouchableOpacity
+                    style={styles.saveValueBtn}
+                    onPress={() => rollSave(s.label, s.value)}
+                  >
+                    <Text style={styles.saveValue}>
+                      {s.value >= 0 ? `+${s.value}` : `${s.value}`}
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.flex1}>
+                    <Text style={styles.saveLabel}>{s.label}</Text>
+                    <ProficiencyPicker
+                      value={s.prof}
+                      onChange={p => upd({ saves: { ...char.saves, [s.key]: p } })}
+                    />
+                  </View>
                 </View>
-                <View style={styles.saveBonus}>
-                  <Text style={styles.miniLabel}>Прочее</Text>
-                  <NumberInput value={s.bonus} onChange={v => upd({ saves: { ...char.saves, [s.bonusKey]: v } })} compact />
+                {/* Строка 2: Прочее бонус */}
+                <View style={styles.saveBonusRow}>
+                  <Text style={styles.miniLabel}>Прочее:</Text>
+                  <View style={styles.saveBonusInput}>
+                    <NumberInput value={s.bonus} onChange={v => upd({ saves: { ...char.saves, [s.bonusKey]: v } })} compact />
+                  </View>
                 </View>
               </View>
             ))}
@@ -459,11 +484,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   hpBar: { height: '100%', borderRadius: Radius.full },
-  hpRow: { flexDirection: 'row', gap: 8 },
-  hpBlock: { flex: 1 },
-  // Hero Points
-  heroPointsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroDotsRow: { flexDirection: 'row', gap: 8 },
+  heroDotsRow: { flexDirection: 'row', gap: 6, alignItems: 'center', paddingTop: 4 },
   // Defense
   acRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   acBig: { alignItems: 'center', justifyContent: 'center', minWidth: 64 },
@@ -472,15 +493,20 @@ const styles = StyleSheet.create({
     fontSize: Fonts.xxxl,
     fontWeight: '900',
   },
-  // Saves stack
-  savesStack: { gap: 10 },
-  saveRow: {
+  // Saves
+  savesStack: { gap: 8 },
+  saveBlock: {
+    backgroundColor: Colors.bg,
+    borderRadius: Radius.md,
+    padding: 10,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  saveTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: Colors.bg,
-    borderRadius: Radius.md,
-    padding: 8,
   },
   saveValueBtn: {
     backgroundColor: Colors.surfaceAlt,
@@ -489,10 +515,21 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   saveValue: { color: Colors.textPrimary, fontSize: Fonts.lg, fontWeight: '800' },
   saveLabel: { color: Colors.textSecondary, fontSize: Fonts.xs, marginBottom: 4 },
-  saveBonus: { width: 80 },
+  saveBonusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 2,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    marginTop: 2,
+  },
+  saveBonusInput: { width: 120 },
+  // Perception
   percRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   percValueBtn: {
     backgroundColor: Colors.surfaceAlt,

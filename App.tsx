@@ -1,13 +1,12 @@
 import 'react-native-get-random-values';
 import React, { useState, useCallback } from 'react';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
   StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +29,45 @@ const NAV_THEME = {
     notification: Colors.danger,
   },
 };
+
+function CharacterApp({ character, onCharChange, onBack }: {
+  character: Character;
+  onCharChange: (ch: Character) => void;
+  onBack: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.bg} translucent />
+
+      {/* Top bar — находится НИЖЕ строки состояния */}
+      <View style={styles.topBar}>
+        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
+          <Text style={styles.backText}>Персонажи</Text>
+        </TouchableOpacity>
+
+        <View style={styles.charInfo}>
+          <Text style={styles.charName} numberOfLines={1}>{character.name}</Text>
+          <Text style={styles.charSub}>
+            {[character.characterClass, `ур. ${character.level}`].filter(Boolean).join(' · ')}
+          </Text>
+        </View>
+
+        <View style={styles.hpChip}>
+          <Text style={styles.hpChipLabel}>HP</Text>
+          <Text style={styles.hpChipValue}>{character.hp.current}/{character.hp.max}</Text>
+        </View>
+      </View>
+
+      {/* Navigation */}
+      <View style={styles.navContainer}>
+        <AppNavigator character={character} onCharChange={onCharChange} />
+      </View>
+    </View>
+  );
+}
 
 export default function App() {
   const [activeChar, setActiveChar] = useState<Character | null>(null);
@@ -59,39 +97,18 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationContainer theme={NAV_THEME}>
-        <SafeAreaView style={styles.safe}>
-          <StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
-
-          {/* Top bar */}
-          <View style={styles.topBar}>
-            <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
-              <Ionicons name="chevron-back" size={20} color={Colors.textSecondary} />
-              <Text style={styles.backText}>Персонажи</Text>
-            </TouchableOpacity>
-
-            <View style={styles.charInfo}>
-              <Text style={styles.charName} numberOfLines={1}>{activeChar.name}</Text>
-              <Text style={styles.charSub}>
-                {[activeChar.characterClass, `ур. ${activeChar.level}`].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-
-            <View style={styles.hpChip}>
-              <Text style={styles.hpChipLabel}>HP</Text>
-              <Text style={styles.hpChipValue}>{activeChar.hp.current}/{activeChar.hp.max}</Text>
-            </View>
-          </View>
-
-          {/* Navigation */}
-          <AppNavigator character={activeChar} onCharChange={handleCharChange} />
-        </SafeAreaView>
+        <CharacterApp
+          character={activeChar}
+          onCharChange={handleCharChange}
+          onBack={handleBack}
+        />
       </NavigationContainer>
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bg },
+  root: { flex: 1, backgroundColor: Colors.bg },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -102,6 +119,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     gap: 8,
   },
+  navContainer: { flex: 1 },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, minWidth: 90 },
   backText: { color: Colors.textSecondary, fontSize: Fonts.sm },
   charInfo: { flex: 1, alignItems: 'center' },
