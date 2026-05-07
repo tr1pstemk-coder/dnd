@@ -1,6 +1,6 @@
 import 'react-native-get-random-values';
-import React, { useState, useEffect, useCallback } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useState, useCallback } from 'react';
+import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   View,
@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   SafeAreaView,
   StatusBar,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -19,10 +18,22 @@ import { CharactersListScreen } from './src/features/characters/CharactersListSc
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { Colors, Fonts, Radius } from './src/ui/theme';
 
+const NAV_THEME = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    primary: Colors.accent,
+    background: Colors.bg,
+    card: Colors.surface,
+    text: Colors.textPrimary,
+    border: Colors.border,
+    notification: Colors.danger,
+  },
+};
+
 export default function App() {
   const [activeChar, setActiveChar] = useState<Character | null>(null);
 
-  // Auto-save when character changes
   const handleCharChange = useCallback(async (ch: Character) => {
     setActiveChar(ch);
     await saveCharacter(ch);
@@ -47,19 +58,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer
-        theme={{
-          dark: true,
-          colors: {
-            primary: Colors.accent,
-            background: Colors.bg,
-            card: Colors.surface,
-            text: Colors.textPrimary,
-            border: Colors.border,
-            notification: Colors.danger,
-          },
-        }}
-      >
+      <NavigationContainer theme={NAV_THEME}>
         <SafeAreaView style={styles.safe}>
           <StatusBar barStyle="light-content" backgroundColor={Colors.bg} />
 
