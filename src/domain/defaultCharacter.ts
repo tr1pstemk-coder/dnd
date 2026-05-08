@@ -50,6 +50,7 @@ export function createDefaultCharacter(): Character {
     },
     lore1Name: 'Знание',
     lore2Name: 'Знание',
+    feats: [],
     strikes: [],
     weaponProficiencies: { unarmed: 'T', simple: 'U', martial: 'U', advanced: 'U' },
     armorProficiencies: { unarmored: 'T', light: 'U', medium: 'U', heavy: 'U' },
