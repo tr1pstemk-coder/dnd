@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Fonts, Radius } from '../../ui/theme';
-import { ancestries, heritages, classes, backgrounds } from '../../data/pf2eData';
+import { ancestries, heritages, classes, backgrounds, feats } from '../../data/pf2eData';
 import { Character, AbilityScores } from '../../domain/types';
 import { createDefaultCharacter } from '../../domain/defaultCharacter';
 import { saveCharacter } from '../../data/db';
@@ -24,28 +24,66 @@ interface Props {
   onCreated: () => void;
 }
 
-const STEPS = ['Раса', 'Наследие', 'Класс', 'Предыстория', 'Характеристики', 'Имя'];
+// Шаги визарда
+const STEPS = ['Раса', 'Наследие', 'Ancestry Feat', 'Класс', 'Навыки', 'Предыстория', 'Характеристики', 'Имя'];
 const ABILITIES: (keyof AbilityScores)[] = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 const ABILITY_NAMES: Record<keyof AbilityScores, string> = {
-  str: 'Сила',
-  dex: 'Ловкость',
-  con: 'Выносливость',
-  int: 'Интеллект',
-  wis: 'Мудрость',
-  cha: 'Харизма',
+  str: 'Сила', dex: 'Ловкость', con: 'Выносливость', int: 'Интеллект', wis: 'Мудрость', cha: 'Харизма',
 };
 const ABILITY_SHORT: Record<keyof AbilityScores, string> = {
   str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA',
 };
 
+// Все навыки PF2e
+export const ALL_SKILLS = [
+  'acrobatics', 'athletics', 'crafting', 'deception', 'diplomacy',
+  'intimidation', 'medicine', 'nature', 'occultism', 'performance',
+  'religion', 'society', 'stealth', 'survival', 'thievery',
+];
+export const SKILL_NAMES: Record<string, string> = {
+  acrobatics: 'Акробатика', athletics: 'Атлетика', crafting: 'Ремесло',
+  deception: 'Обман', diplomacy: 'Дипломатия', intimidation: 'Запугивание',
+  medicine: 'Медицина', nature: 'Природа', occultism: 'Оккультизм',
+  performance: 'Выступление', religion: 'Религия', society: 'Общество',
+  stealth: 'Скрытность', survival: 'Выживание', thievery: 'Воровство',
+};
+
+// ─── Утилиты данных ──────────────────────────────────────────────────────────
+
 function getEntries(json: any): any[] {
   if (!json) return [];
-  if (Array.isArray(json)) return json;
+  if (Array.isArray(json)) {
+    // Новый формат: первый элемент - папки (объект с value:[]), остальные - реальные данные
+    const items = json.filter((i: any) => i?.type !== 'Item' || i?.system);
+    // Если есть type:heritage или type:feat — это реальные данные
+    const real = json.filter((i: any) => i?.type && i?.system);
+    if (real.length > 0) return real;
+    // Иначе старый формат
+    return json.filter((i: any) => i?.name && !i?.value);
+  }
   if (json.items && Array.isArray(json.items)) return json.items;
   const keys = Object.keys(json);
   if (keys.length > 0 && Array.isArray(json[keys[0]])) return json[keys[0]];
   return Object.values(json);
 }
+
+function parseHeritages(raw: any): any[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    // Фильтруем только объекты с type:'heritage'
+    return raw.filter((i: any) => i?.type === 'heritage' && i?.system);
+  }
+  return [];
+}
+
+function parseFeats(raw: any): any[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.filter((i: any) => i?.type === 'feat' && i?.system);
+  }
+  return [];
+}
+
 function getName(item: any): string {
   return item?.name ?? item?.system?.name ?? item?._id ?? '???';
 }
@@ -70,21 +108,36 @@ function getKeyAbility(item: any): string {
   if (!ka) return '';
   return Array.isArray(ka) ? ka.join('/').toUpperCase() : String(ka).toUpperCase();
 }
-function getHeritageAncestry(item: any): string {
-  return item?.system?.ancestry?.name ?? item?.system?.ancestry ?? '';
+
+// Получаем slug расы наследия
+function getHeritageAncestrySlug(item: any): string {
+  return item?.system?.ancestry?.slug ?? '';
 }
 
-// Получаем бусты и штрафы расы
+// Получаем slug расы из ancestries.json
+function getAncestrySlug(item: any): string {
+  return item?.system?.slug ?? item?.name?.toLowerCase().replace(/\s+/g, '-') ?? '';
+}
+
+// Versatile Heritage - папка с id 'khXMNyAoAoZ70PpT' (Versatile Heritages)
+const VERSATILE_FOLDER_ID = 'khXMNyAoAoZ70PpT';
+
+function isVersatileHeritage(item: any): boolean {
+  // Versatile heritages не имеют ancestry.slug или их folder = versatile
+  const slug = getHeritageAncestrySlug(item);
+  return slug === '' || slug === 'versatile';
+}
+
+// ─── Бусты расы ──────────────────────────────────────────────────────────────
+
 function getAncestryBoosts(ancestryEntry: any): { fixed: string[]; free: string[]; flaws: string[] } {
   const boosts = ancestryEntry?.system?.boosts ?? {};
   const flawsRaw = ancestryEntry?.system?.flaws ?? {};
   const fixed: string[] = [];
   const free: string[] = [];
-  const allAbils = ['str', 'dex', 'con', 'int', 'wis', 'cha'];
 
   Object.values(boosts).forEach((b: any) => {
     const vals: string[] = b?.value ?? [];
-    // Если значений = 6 или 0 — это свободный буст
     if (vals.length === 0 || vals.length >= 6) {
       free.push('free');
     } else {
@@ -101,23 +154,36 @@ function getAncestryBoosts(ancestryEntry: any): { fixed: string[]; free: string[
   return { fixed, free, flaws };
 }
 
-// Получаем ключевую характеристику класса
 function getClassKeyAbilities(classEntry: any): string[] {
   const ka = classEntry?.system?.keyAbility?.value;
   if (!ka) return [];
   return Array.isArray(ka) ? ka : [ka];
 }
 
-// === SelectStep ===
+// Сколько навыков даёт класс
+function getClassSkillCount(classEntry: any): number {
+  return classEntry?.system?.trainedSkills?.additional ?? classEntry?.system?.skillIncrease ?? 2;
+}
+
+// Фиксированные навыки класса
+function getClassFixedSkills(classEntry: any): string[] {
+  const skills = classEntry?.system?.trainedSkills?.value ?? [];
+  return skills.map((s: string) => s.toLowerCase());
+}
+
+// ─── SelectStep ──────────────────────────────────────────────────────────────
+
 interface SelectStepProps {
   title: string;
+  subtitle?: string;
   items: any[];
   selected: string;
   onSelect: (name: string) => void;
   badge?: (item: any) => string;
   badge2?: (item: any) => string;
 }
-function SelectStep({ title, items, selected, onSelect, badge, badge2 }: SelectStepProps) {
+
+function SelectStep({ title, subtitle, items, selected, onSelect, badge, badge2 }: SelectStepProps) {
   const [search, setSearch] = useState('');
   const filtered = useMemo(() => {
     if (!search.trim()) return items;
@@ -128,6 +194,7 @@ function SelectStep({ title, items, selected, onSelect, badge, badge2 }: SelectS
   return (
     <View style={{ flex: 1 }}>
       <Text style={styles.stepTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.stepSubtitle}>{subtitle}</Text> : null}
       <View style={styles.searchBox}>
         <Ionicons name="search" size={16} color={Colors.textMuted} style={{ marginRight: 8 }} />
         <TextInput
@@ -153,6 +220,7 @@ function SelectStep({ title, items, selected, onSelect, badge, badge2 }: SelectS
           const b1 = badge ? badge(item) : '';
           const b2 = badge2 ? badge2(item) : '';
           const desc = getDesc(item);
+          const isVers = item?.type === 'heritage' && isVersatileHeritage(item);
           return (
             <TouchableOpacity
               style={[styles.row, isSelected && styles.rowSelected]}
@@ -160,7 +228,14 @@ function SelectStep({ title, items, selected, onSelect, badge, badge2 }: SelectS
               activeOpacity={0.75}
             >
               <View style={styles.rowLeft}>
-                <Text style={[styles.rowName, isSelected && styles.rowNameSelected]}>{name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.rowName, isSelected && styles.rowNameSelected]}>{name}</Text>
+                  {isVers && (
+                    <View style={styles.versatileBadge}>
+                      <Text style={styles.versatileBadgeText}>Versatile</Text>
+                    </View>
+                  )}
+                </View>
                 {desc ? <Text style={styles.rowDesc} numberOfLines={2}>{desc}</Text> : null}
                 {(b1 || b2) ? (
                   <View style={styles.badgeRow}>
@@ -174,18 +249,97 @@ function SelectStep({ title, items, selected, onSelect, badge, badge2 }: SelectS
           );
         }}
         ListEmptyComponent={
-          <View style={styles.empty}><Text style={styles.emptyText}>Ничего не найдено</Text></View>
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>Ничего не найдено</Text>
+          </View>
         }
       />
     </View>
   );
 }
 
-// === AbilitiesStep ===
+// ─── SkillsStep ──────────────────────────────────────────────────────────────
+
+interface SkillsStepProps {
+  classEntry: any;
+  selectedSkills: string[];
+  onSkillsChange: (skills: string[]) => void;
+}
+
+function SkillsStep({ classEntry, selectedSkills, onSkillsChange }: SkillsStepProps) {
+  const fixedSkills = useMemo(() => getClassFixedSkills(classEntry), [classEntry]);
+  const extraCount = useMemo(() => getClassSkillCount(classEntry), [classEntry]);
+  const freeSkills = selectedSkills.filter(s => !fixedSkills.includes(s));
+  const remaining = extraCount - freeSkills.length;
+
+  const toggle = (skill: string) => {
+    if (fixedSkills.includes(skill)) return; // фиксированный, нельзя снять
+    if (selectedSkills.includes(skill)) {
+      onSkillsChange(selectedSkills.filter(s => s !== skill));
+    } else if (remaining > 0) {
+      onSkillsChange([...selectedSkills, skill]);
+    }
+  };
+
+  return (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <Text style={styles.stepTitle}>Навыки класса</Text>
+      <Text style={styles.stepSubtitle}>
+        Выбери {extraCount} дополнительных навыка · осталось: {remaining}
+      </Text>
+      {fixedSkills.length > 0 && (
+        <View style={styles.fixedSkillsBox}>
+          <Text style={styles.fixedSkillsLabel}>Фиксированные навыки класса:</Text>
+          <View style={styles.skillChipRow}>
+            {fixedSkills.map(s => (
+              <View key={s} style={[styles.skillChip, styles.skillChipFixed]}>
+                <Text style={[styles.skillChipText, styles.skillChipTextFixed]}>
+                  {SKILL_NAMES[s] ?? s}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
+      <View style={styles.skillGrid}>
+        {ALL_SKILLS.map(skill => {
+          const isFixed = fixedSkills.includes(skill);
+          const isSelected = selectedSkills.includes(skill);
+          const canSelect = isSelected || remaining > 0;
+          return (
+            <TouchableOpacity
+              key={skill}
+              style={[
+                styles.skillChip,
+                isFixed && styles.skillChipFixed,
+                !isFixed && isSelected && styles.skillChipSelected,
+                !isFixed && !isSelected && !canSelect && styles.skillChipDisabled,
+              ]}
+              onPress={() => toggle(skill)}
+              disabled={isFixed}
+            >
+              <Text style={[
+                styles.skillChipText,
+                isFixed && styles.skillChipTextFixed,
+                !isFixed && isSelected && styles.skillChipTextSelected,
+              ]}>
+                {SKILL_NAMES[skill] ?? skill}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <View style={{ height: 20 }} />
+    </ScrollView>
+  );
+}
+
+// ─── AbilitiesStep ───────────────────────────────────────────────────────────
+
 interface AbilitiesStepProps {
   ancestryEntry: any;
   classEntry: any;
-  freeBoosts: Partial<Record<keyof AbilityScores, number>>; // сколько раз применён free boost
+  freeBoosts: Partial<Record<keyof AbilityScores, number>>;
   classAbilityChoice: keyof AbilityScores | null;
   freeGeneralBoosts: Partial<Record<keyof AbilityScores, number>>;
   onFreeChange: (boosts: Partial<Record<keyof AbilityScores, number>>) => void;
@@ -203,17 +357,13 @@ function AbilitiesStep({
     getClassKeyAbilities(classEntry), [classEntry]);
   const needClassChoice = classKeyAbils.length > 1;
 
-  // Подсчитываем бусты для каждой характеристики
   const boostCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     ABILITIES.forEach(a => { counts[a] = 0; });
     fixed.forEach(a => { if (counts[a] !== undefined) counts[a]++; });
-    // Буст класса
     const classAb = needClassChoice ? classAbilityChoice : (classKeyAbils[0] as keyof AbilityScores);
     if (classAb) counts[classAb]++;
-    // Свободные бусты расы
     Object.entries(freeBoosts).forEach(([k, v]) => { if (v) counts[k] += v; });
-    // Свободные всеобщие (4 штуки)
     Object.entries(freeGeneralBoosts).forEach(([k, v]) => { if (v) counts[k] += v; });
     return counts;
   }, [fixed, freeBoosts, classAbilityChoice, freeGeneralBoosts, classKeyAbils, needClassChoice]);
@@ -229,7 +379,6 @@ function AbilitiesStep({
     let score = 10;
     const boosts = boostCounts[ab] || 0;
     const flaw = flawCounts[ab] || 0;
-    // Каждый буст +2 (если уже 18+ то +1)
     for (let i = 0; i < boosts; i++) {
       score += score >= 18 ? 1 : 2;
     }
@@ -242,12 +391,9 @@ function AbilitiesStep({
     return m >= 0 ? `+${m}` : `${m}`;
   };
 
-  // Количество свободных бустов расы
   const freeAncestryCount = free.length;
   const freeAncestryUsed = Object.values(freeBoosts).reduce((s, v) => s + (v || 0), 0);
   const freeAncestryLeft = freeAncestryCount - freeAncestryUsed;
-
-  // 4 свободных буста
   const freeGeneralUsed = Object.values(freeGeneralBoosts).reduce((s, v) => s + (v || 0), 0);
   const freeGeneralLeft = 4 - freeGeneralUsed;
 
@@ -256,7 +402,6 @@ function AbilitiesStep({
     if (cur > 0) {
       onFreeChange({ ...freeBoosts, [ab]: 0 });
     } else if (freeAncestryLeft > 0) {
-      // Нельзя ставить два буста на одну хар-ку (если уже есть фиксированный + free на эту хар-ку)
       onFreeChange({ ...freeBoosts, [ab]: 1 });
     }
   };
@@ -272,9 +417,8 @@ function AbilitiesStep({
 
   return (
     <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-      <Text style={styles.stepTitle}>Распредели характеристики</Text>
+      <Text style={styles.stepTitle}>Характеристики</Text>
 
-      {/* Основной блок характеристик */}
       <View style={styles.abilitiesGrid}>
         {ABILITIES.map(ab => {
           const score = getScore(ab);
@@ -288,22 +432,27 @@ function AbilitiesStep({
               <Text style={styles.abilityScore}>{score}</Text>
               <Text style={styles.abilityMod}>{mod}</Text>
               <View style={styles.abilityTagRow}>
-                {isFixed && <View style={[styles.abilityTag, { backgroundColor: Colors.accent + '33' }]}>
-                  <Text style={[styles.abilityTagText, { color: Colors.accent }]}>раса</Text>
-                </View>}
-                {isClassFixed && <View style={[styles.abilityTag, { backgroundColor: Colors.gold + '33' }]}>
-                  <Text style={[styles.abilityTagText, { color: Colors.gold }]}>класс</Text>
-                </View>}
-                {isFlaw && <View style={[styles.abilityTag, { backgroundColor: Colors.danger + '33' }]}>
-                  <Text style={[styles.abilityTagText, { color: Colors.danger }]}>штраф</Text>
-                </View>}
+                {isFixed && (
+                  <View style={[styles.abilityTag, { backgroundColor: Colors.accent + '33' }]}>
+                    <Text style={[styles.abilityTagText, { color: Colors.accent }]}>раса</Text>
+                  </View>
+                )}
+                {isClassFixed && (
+                  <View style={[styles.abilityTag, { backgroundColor: Colors.gold + '33' }]}>
+                    <Text style={[styles.abilityTagText, { color: Colors.gold }]}>класс</Text>
+                  </View>
+                )}
+                {isFlaw && (
+                  <View style={[styles.abilityTag, { backgroundColor: Colors.danger + '33' }]}>
+                    <Text style={[styles.abilityTagText, { color: Colors.danger }]}>штраф</Text>
+                  </View>
+                )}
               </View>
             </View>
           );
         })}
       </View>
 
-      {/* Выбор ключевой характеристики класса */}
       {needClassChoice && (
         <View style={styles.boostSection}>
           <Text style={styles.boostSectionTitle}>Ключевая хар-ка класса</Text>
@@ -324,7 +473,6 @@ function AbilitiesStep({
         </View>
       )}
 
-      {/* Свободные бусты расы */}
       {freeAncestryCount > 0 && (
         <View style={styles.boostSection}>
           <Text style={styles.boostSectionTitle}>Свободные бусты расы</Text>
@@ -348,7 +496,6 @@ function AbilitiesStep({
         </View>
       )}
 
-      {/* 4 свободных буста */}
       <View style={styles.boostSection}>
         <Text style={styles.boostSectionTitle}>4 свободных усиления</Text>
         <Text style={styles.boostSectionSub}>Выбери любые 4 · осталось: {freeGeneralLeft}</Text>
@@ -375,43 +522,85 @@ function AbilitiesStep({
   );
 }
 
-// === Главный визард ===
+// ─── Главный визард ───────────────────────────────────────────────────────────
+
 export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
   const [step, setStep] = useState(0);
   const [selectedAncestry, setSelectedAncestry] = useState('');
   const [selectedHeritage, setSelectedHeritage] = useState('');
+  const [selectedAncestryFeat, setSelectedAncestryFeat] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedBackground, setSelectedBackground] = useState('');
-  // Шаг 5 - характеристики
   const [freeBoosts, setFreeBoosts] = useState<Partial<Record<keyof AbilityScores, number>>>({});
   const [classAbilityChoice, setClassAbilityChoice] = useState<keyof AbilityScores | null>(null);
   const [freeGeneralBoosts, setFreeGeneralBoosts] = useState<Partial<Record<keyof AbilityScores, number>>>({});
   const [name, setName] = useState('');
 
+  // Парсим данные правильно
   const allAncestries = useMemo(() => getEntries(ancestries), []);
-  const allHeritages = useMemo(() => {
-    const all = getEntries(heritages);
-    if (!selectedAncestry) return all;
-    return all.filter(h => {
-      const ha = getHeritageAncestry(h).toLowerCase();
-      return ha === '' || ha === selectedAncestry.toLowerCase();
-    });
-  }, [selectedAncestry]);
+  const allHeritagesRaw = useMemo(() => parseHeritages(heritages), []);
+  const allFeatsRaw = useMemo(() => parseFeats(feats), []);
   const allClasses = useMemo(() => getEntries(classes), []);
   const allBackgrounds = useMemo(() => getEntries(backgrounds), []);
+
+  // Наследия для выбранной расы + versatile
+  const filteredHeritages = useMemo(() => {
+    if (!selectedAncestry) return allHeritagesRaw;
+    const ancestryEntry = allAncestries.find(a => getName(a) === selectedAncestry);
+    const slug = ancestryEntry ? getAncestrySlug(ancestryEntry) : selectedAncestry.toLowerCase().replace(/\s+/g, '-');
+    return allHeritagesRaw.filter(h => {
+      const hSlug = getHeritageAncestrySlug(h);
+      // Показываем: наследия этой расы ИЛИ versatile (без slug)
+      return hSlug === slug || hSlug === '' || isVersatileHeritage(h);
+    });
+  }, [selectedAncestry, allAncestries, allHeritagesRaw]);
+
+  // Ancestry feats для выбранной расы (уровень 1)
+  const ancestryFeatsFiltered = useMemo(() => {
+    if (!selectedAncestry) return [];
+    const ancestryEntry = allAncestries.find(a => getName(a) === selectedAncestry);
+    const slug = ancestryEntry ? getAncestrySlug(ancestryEntry) : selectedAncestry.toLowerCase().replace(/\s+/g, '-');
+    return allFeatsRaw.filter(f => {
+      const traits: string[] = f?.system?.traits?.value ?? [];
+      const level = f?.system?.level?.value ?? 1;
+      // Фит расы уровня 1: имеет trait = slug расы
+      return level <= 1 && traits.some(t => t.toLowerCase() === slug.toLowerCase());
+    });
+  }, [selectedAncestry, allAncestries, allFeatsRaw]);
 
   const ancestryEntry = useMemo(() =>
     allAncestries.find(a => getName(a) === selectedAncestry), [allAncestries, selectedAncestry]);
   const classEntry = useMemo(() =>
     allClasses.find(c => getName(c) === selectedClass), [allClasses, selectedClass]);
 
+  // Сброс зависимых выборов при смене расы
+  const handleAncestrySelect = useCallback((name: string) => {
+    setSelectedAncestry(name);
+    setSelectedHeritage('');
+    setSelectedAncestryFeat('');
+  }, []);
+
+  // Сброс навыков при смене класса
+  const handleClassSelect = useCallback((name: string) => {
+    setSelectedClass(name);
+    setSelectedSkills([]);
+  }, []);
+
   const canNext = () => {
     if (step === 0) return selectedAncestry !== '';
-    if (step === 1) return true;
-    if (step === 2) return selectedClass !== '';
-    if (step === 3) return true;
+    if (step === 1) return selectedHeritage !== '';
+    if (step === 2) return true; // ancestry feat необязателен
+    if (step === 3) return selectedClass !== '';
     if (step === 4) {
-      // Проверяем что все свободные бусты расы распределены
+      // Навыки: должны быть выбраны все доступные
+      const fixed = getClassFixedSkills(classEntry);
+      const extra = getClassSkillCount(classEntry);
+      const freeSelected = selectedSkills.filter(s => !fixed.includes(s));
+      return freeSelected.length >= extra;
+    }
+    if (step === 5) return true; // предыстория необязательна
+    if (step === 6) {
       const { free } = getAncestryBoosts(ancestryEntry);
       const freeUsed = Object.values(freeBoosts).reduce((s, v) => s + (v || 0), 0);
       const classKeys = getClassKeyAbilities(classEntry);
@@ -421,7 +610,7 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
       if (generalUsed < 4) return false;
       return true;
     }
-    if (step === 5) return name.trim() !== '';
+    if (step === 7) return name.trim() !== '';
     return false;
   };
 
@@ -439,7 +628,9 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
     setStep(0);
     setSelectedAncestry('');
     setSelectedHeritage('');
+    setSelectedAncestryFeat('');
     setSelectedClass('');
+    setSelectedSkills([]);
     setSelectedBackground('');
     setFreeBoosts({});
     setClassAbilityChoice(null);
@@ -455,9 +646,23 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
     char.heritage = selectedHeritage;
     char.characterClass = selectedClass;
     char.background = selectedBackground;
+    // XP
+    (char as any).xp = 0;
+    (char as any).level = 1;
+    // Ancestry feat
+    (char as any).ancestryFeat = selectedAncestryFeat;
+    // Навыки
+    const fixed = getClassFixedSkills(classEntry);
+    const allSelected = [...new Set([...fixed, ...selectedSkills])];
+    allSelected.forEach(skill => {
+      const key = skill as keyof typeof char.skills;
+      if (char.skills[key]) {
+        char.skills[key].proficiency = 'T';
+      }
+    });
 
     // Характеристики
-    const { fixed, free: freeList, flaws } = getAncestryBoosts(ancestryEntry);
+    const { fixed: abilFixed, free: freeList, flaws } = getAncestryBoosts(ancestryEntry);
     const classKeys = getClassKeyAbilities(classEntry);
     const classAb = classKeys.length > 1 ? classAbilityChoice : (classKeys[0] as keyof AbilityScores);
 
@@ -471,7 +676,7 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
     ABILITIES.forEach(ab => {
       let score = 10;
       let boostCount = 0;
-      if (fixed.includes(ab)) boostCount++;
+      if (abilFixed.includes(ab)) boostCount++;
       if (classAb === ab) boostCount++;
       if (freeBoosts[ab]) boostCount += freeBoosts[ab] as number;
       if (freeGeneralBoosts[ab]) boostCount += freeGeneralBoosts[ab] as number;
@@ -491,7 +696,7 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
     const speed = ancestryEntry?.system?.speed;
     if (speed) char.speed = speed;
 
-    // Владение броней по классу — Воин/Fighter/Barbarian = лёгкая⁠+, остальные = невооружённый
+    // Броня
     const heavyClasses = ['Fighter', 'Champion', 'Paladin'];
     const mediumClasses = ['Barbarian', 'Ranger', 'Monk'];
     if (heavyClasses.includes(selectedClass)) {
@@ -533,11 +738,63 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
         </View>
 
         <View style={{ flex: 1, paddingHorizontal: 16 }}>
-          {step === 0 && <SelectStep title="Выбери расу" items={allAncestries} selected={selectedAncestry} onSelect={setSelectedAncestry} badge={getHp} badge2={getSpeed} />}
-          {step === 1 && <SelectStep title="Выбери наследие" items={allHeritages} selected={selectedHeritage} onSelect={setSelectedHeritage} />}
-          {step === 2 && <SelectStep title="Выбери класс" items={allClasses} selected={selectedClass} onSelect={setSelectedClass} badge={getClassHp} badge2={getKeyAbility} />}
-          {step === 3 && <SelectStep title="Выбери предысторию" items={allBackgrounds} selected={selectedBackground} onSelect={setSelectedBackground} />}
+          {step === 0 && (
+            <SelectStep
+              title="Выбери расу"
+              items={allAncestries}
+              selected={selectedAncestry}
+              onSelect={handleAncestrySelect}
+              badge={getHp}
+              badge2={getSpeed}
+            />
+          )}
+          {step === 1 && (
+            <SelectStep
+              title="Выбери наследие"
+              subtitle={`Наследия для ${selectedAncestry} + Versatile Heritages`}
+              items={filteredHeritages}
+              selected={selectedHeritage}
+              onSelect={setSelectedHeritage}
+            />
+          )}
+          {step === 2 && (
+            <SelectStep
+              title="Ancestry Feat (1 уровень)"
+              subtitle={ancestryFeatsFiltered.length === 0
+                ? 'Нет доступных фитов (можно пропустить)'
+                : `Выбери фит расы ${selectedAncestry}`}
+              items={ancestryFeatsFiltered}
+              selected={selectedAncestryFeat}
+              onSelect={setSelectedAncestryFeat}
+            />
+          )}
+          {step === 3 && (
+            <SelectStep
+              title="Выбери класс"
+              items={allClasses}
+              selected={selectedClass}
+              onSelect={handleClassSelect}
+              badge={getClassHp}
+              badge2={getKeyAbility}
+            />
+          )}
           {step === 4 && (
+            <SkillsStep
+              classEntry={classEntry}
+              selectedSkills={selectedSkills}
+              onSkillsChange={setSelectedSkills}
+            />
+          )}
+          {step === 5 && (
+            <SelectStep
+              title="Выбери предысторию"
+              subtitle="Необязательно"
+              items={allBackgrounds}
+              selected={selectedBackground}
+              onSelect={setSelectedBackground}
+            />
+          )}
+          {step === 6 && (
             <AbilitiesStep
               ancestryEntry={ancestryEntry}
               classEntry={classEntry}
@@ -549,14 +806,21 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
               onFreeGeneralChange={setFreeGeneralBoosts}
             />
           )}
-          {step === 5 && (
+          {step === 7 && (
             <View style={{ flex: 1 }}>
               <Text style={styles.stepTitle}>Имя персонажа</Text>
               <View style={styles.summaryCard}>
                 <SummaryRow label="Раса" value={selectedAncestry || '—'} />
                 <SummaryRow label="Наследие" value={selectedHeritage || '—'} />
+                <SummaryRow label="Ancestry Feat" value={selectedAncestryFeat || '—'} />
                 <SummaryRow label="Класс" value={selectedClass || '—'} />
                 <SummaryRow label="Предыстория" value={selectedBackground || '—'} />
+                <SummaryRow
+                  label="Навыки"
+                  value={selectedSkills.length > 0
+                    ? selectedSkills.map(s => SKILL_NAMES[s] ?? s).join(', ')
+                    : '—'}
+                />
               </View>
               <Text style={styles.inputLabel}>Имя *</Text>
               <TextInput
@@ -572,6 +836,14 @@ export function CreateCharacterWizard({ visible, onClose, onCreated }: Props) {
         </View>
 
         <View style={styles.footer}>
+          {step === 2 && !selectedAncestryFeat && (
+            <TouchableOpacity
+              style={[styles.nextBtn, { backgroundColor: Colors.border, marginBottom: 8 }]}
+              onPress={() => setStep(step + 1)}
+            >
+              <Text style={[styles.nextBtnText, { color: Colors.textMuted }]}>Пропустить</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={[styles.nextBtn, !canNext() && styles.nextBtnDisabled]}
             onPress={handleNext}
@@ -594,7 +866,7 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.summaryRow}>
       <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryValue} numberOfLines={2} style={{ flex: 1, textAlign: 'right', color: Colors.textPrimary, fontSize: Fonts.sm, fontWeight: '600' }}>{value}</Text>
     </View>
   );
 }
@@ -608,7 +880,8 @@ const styles = StyleSheet.create({
   progressBg: { height: 4, backgroundColor: Colors.border, borderRadius: 2, marginBottom: 8, overflow: 'hidden' },
   progressFill: { height: 4, backgroundColor: Colors.accent, borderRadius: 2 },
   progressLabel: { color: Colors.textMuted, fontSize: Fonts.xs },
-  stepTitle: { color: Colors.textPrimary, fontSize: Fonts.lg, fontWeight: '700', marginBottom: 12, marginTop: 4 },
+  stepTitle: { color: Colors.textPrimary, fontSize: Fonts.lg, fontWeight: '700', marginBottom: 4, marginTop: 4 },
+  stepSubtitle: { color: Colors.textMuted, fontSize: Fonts.xs, marginBottom: 12 },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 12 },
   searchInput: { flex: 1, color: Colors.textPrimary, fontSize: Fonts.base },
   row: { backgroundColor: Colors.surface, borderRadius: Radius.md, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: Colors.border, flexDirection: 'row', alignItems: 'center' },
@@ -620,8 +893,22 @@ const styles = StyleSheet.create({
   badgeRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
   badge: { backgroundColor: Colors.accent + '22', borderRadius: Radius.sm, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: Colors.accent + '44' },
   badgeText: { color: Colors.accent, fontSize: Fonts.xs, fontWeight: '600' },
+  versatileBadge: { backgroundColor: Colors.gold + '22', borderRadius: Radius.sm, paddingHorizontal: 6, paddingVertical: 1, borderWidth: 1, borderColor: Colors.gold + '55' },
+  versatileBadgeText: { color: Colors.gold, fontSize: 9, fontWeight: '700' },
   empty: { alignItems: 'center', paddingTop: 40 },
   emptyText: { color: Colors.textMuted, fontSize: Fonts.sm },
+  // Skills
+  fixedSkillsBox: { backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, padding: 12, marginBottom: 12 },
+  fixedSkillsLabel: { color: Colors.textMuted, fontSize: Fonts.xs, marginBottom: 8, fontWeight: '600' },
+  skillGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  skillChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  skillChip: { backgroundColor: Colors.surface, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 12, paddingVertical: 8 },
+  skillChipFixed: { backgroundColor: Colors.accent + '22', borderColor: Colors.accent },
+  skillChipSelected: { backgroundColor: Colors.gold + '22', borderColor: Colors.gold },
+  skillChipDisabled: { opacity: 0.4 },
+  skillChipText: { color: Colors.textMuted, fontSize: Fonts.xs, fontWeight: '600' },
+  skillChipTextFixed: { color: Colors.accent },
+  skillChipTextSelected: { color: Colors.gold },
   // Abilities
   abilitiesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
   abilityCard: { width: '30%', backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, padding: 10, alignItems: 'center' },
@@ -640,8 +927,8 @@ const styles = StyleSheet.create({
   boostBtnText: { color: Colors.textMuted, fontSize: Fonts.xs, fontWeight: '700' },
   boostBtnTextActive: { color: Colors.accent },
   summaryCard: { backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, padding: 16, marginBottom: 20, gap: 10 },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  summaryLabel: { color: Colors.textMuted, fontSize: Fonts.sm },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  summaryLabel: { color: Colors.textMuted, fontSize: Fonts.sm, flexShrink: 0, marginRight: 8 },
   summaryValue: { color: Colors.textPrimary, fontSize: Fonts.sm, fontWeight: '600' },
   inputLabel: { color: Colors.textSecondary, fontSize: Fonts.xs, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
   textInput: { backgroundColor: Colors.surface, borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border, color: Colors.textPrimary, fontSize: Fonts.base, padding: 14 },
