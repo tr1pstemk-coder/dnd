@@ -190,6 +190,14 @@ export interface Condition {
   value?: number; // для условий с числовым значением (оглушён 3)
 }
 
+// ─── Feat (взятый персонажем) ─────────────────────────────────────────────────
+export interface CharacterFeat {
+  id: string;          // _id из JSON
+  name: string;
+  featType: 'ancestry' | 'class' | 'general' | 'skill'; // тип
+  level: number;       // на каком уровне взят
+}
+
 export interface Character {
   id: string;
   // ── Bio ──────────────────────────────────────────────────────────────────
@@ -221,6 +229,8 @@ export interface Character {
   skills: SkillMap;
   lore1Name: string;
   lore2Name: string;
+  // ── Feats ────────────────────────────────────────────────────────────────
+  feats: CharacterFeat[];
   // ── Combat ───────────────────────────────────────────────────────────────
   strikes: WeaponStrike[];
   weaponProficiencies: WeaponProficiencies;
